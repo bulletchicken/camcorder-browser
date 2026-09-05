@@ -251,6 +251,40 @@ def run_convert_job(job_id, paths, output_dir):
             JOBS[job_id]["error"] = str(e)
 
 
+def rename_video(old_path, new_name):
+    """Rename src file on disk; migrate cache entries to new hash. Returns new path str."""
+    src = Path(old_path)
+    if not src.exists():
+        raise ValueError("Source file does not exist")
+    name = (new_name or "").strip()
+    if not name:
+        raise ValueError("Name cannot be empty")
+    if any(c in name for c in "/\\:\x00"):
+        raise ValueError("Name cannot contain / \\ : or null characters")
+    if name in (".", ".."):
+        raise ValueError("Invalid name")
+    if len(name) > 200:
+        raise ValueError("Name too long (max 200 characters)")
+    ext = src.suffix
+    dst = src.with_name(name + ext)
+    if dst == src:
+        return str(src)
+    if dst.exists():
+        raise ValueError(f"A file named '{dst.name}' already exists in that folder")
+    src.rename(dst)
+    old_h = hash_path(src)
+    new_h = hash_path(dst)
+    for cache_dir, exts in [(THUMBS_DIR, [".jpg", ".dur"]), (PREVIEWS_DIR, [".mp4"])]:
+        for e in exts:
+            old_f = cache_dir / (old_h + e)
+            if old_f.exists():
+                try:
+                    old_f.rename(cache_dir / (new_h + e))
+                except OSError:
+                    pass
+    return str(dst)
+
+
 def pick_folder():
     """Native macOS folder picker via osascript."""
     script = 'set p to POSIX path of (choose folder with prompt "Choose output folder")'
@@ -422,6 +456,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if jid in JOBS:
                     JOBS[jid]["cancel"] = True
             self._json(200, {"ok": True})
+        elif u.path == "/api/rename":
+            old = data.get("path", "")
+            name = data.get("name", "")
+            try:
+                new_path = rename_video(old, name)
+                p = Path(new_path)
+                self._json(200, {
+                    "ok": True,
+                    "path": new_path,
+                    "name": p.stem,
+                    "folder": p.parent.name,
+                })
+            except Exception as e:
+                self._json(400, {"ok": False, "error": str(e)})
         elif u.path == "/api/clear_jobs":
             with JOBS_LOCK:
                 for jid in list(JOBS):

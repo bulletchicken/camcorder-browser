@@ -151,11 +151,29 @@
   }
   .info {
     padding: 9px 12px 11px;
-    display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+    position: relative;
   }
-  .info .name { font-weight: 500; font-size: 13px; }
+  .info .name {
+    font-weight: 500; font-size: 13px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding: 2px 6px; margin: -2px -6px 0;
+    border-radius: 5px; cursor: text;
+    transition: background .12s;
+  }
+  .info .name:hover { background: rgba(255,255,255,0.07); }
   .info .sub { color: var(--dim); font-size: 11px;
     font-family: ui-monospace, SF Mono, Menlo, monospace; }
+  .name-input {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--accent); border-radius: 5px;
+    padding: 3px 6px; font: inherit; font-size: 13px; font-weight: 500;
+    width: 100%; outline: none;
+  }
+  #modal-title {
+    padding: 2px 8px; margin: -2px -8px; border-radius: 5px;
+    cursor: text; transition: background .12s;
+  }
+  #modal-title:hover { background: rgba(255,255,255,0.08); }
 
   /* --- Bottom drawer --- */
   .drawer {
@@ -277,8 +295,8 @@
   <div class="modal-backdrop" id="modal">
     <div class="modal">
       <div class="modal-header">
-        <div>
-          <div class="title" id="modal-title"></div>
+        <div style="min-width:0;">
+          <div class="title" id="modal-title" title="Click to rename"></div>
           <div class="sub" id="modal-sub"></div>
         </div>
         <div class="spacer"></div>
@@ -390,8 +408,8 @@ function cardEl(v) {
       <div class="check" title="Select"></div>
     </div>
     <div class="info">
-      <div>
-        <div class="name">${v.folder}/${v.name}</div>
+      <div class="name-row">
+        <div class="name" title="Click to rename">${v.folder}/${v.name}</div>
         <div class="sub">${time} · ${fmtSize(v.size)}</div>
       </div>
     </div>
@@ -408,8 +426,15 @@ function cardEl(v) {
     e.stopPropagation();
     toggleSelect(v.path, card);
   });
-  // click info row = also toggle select (fallback area)
+  // click name = begin rename
+  card.querySelector(".name").addEventListener("click", (e) => {
+    e.stopPropagation();
+    beginRename(card, v);
+  });
+  // click elsewhere in info = toggle select
   card.querySelector(".info").addEventListener("click", (e) => {
+    if (e.target.closest(".name")) return;
+    if (e.target.closest(".name-input")) return;
     e.stopPropagation();
     toggleSelect(v.path, card);
   });
@@ -425,6 +450,69 @@ function toggleSelect(p, card) {
   if (selected.has(p)) selected.delete(p); else selected.add(p);
   card.classList.toggle("selected");
   updateSelUI();
+}
+
+function beginRename(card, v) {
+  const nameEl = card.querySelector(".name");
+  if (!nameEl || card.querySelector(".name-input")) return;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "name-input";
+  input.value = v.name;
+  input.spellcheck = false;
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const cancel = () => {
+    if (done) return; done = true;
+    input.replaceWith(nameEl);
+  };
+  const commit = async () => {
+    if (done) return;
+    const newName = input.value.trim();
+    if (!newName || newName === v.name) { cancel(); return; }
+    done = true;
+    input.disabled = true;
+    try {
+      const r = await fetch("/api/rename", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({path: v.path, name: newName}),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || "rename failed");
+      applyRename(v, j);
+      nameEl.textContent = `${v.folder}/${v.name}`;
+      nameEl.title = `${v.folder}/${v.name}`;
+      input.replaceWith(nameEl);
+      card.dataset.path = v.path;
+      const img = card.querySelector("img");
+      if (img) img.src = "/api/thumb?path=" + encodeURIComponent(v.path);
+      toast(`Renamed to ${v.name}`);
+    } catch (e) {
+      input.disabled = false;
+      done = false;
+      toast("Rename failed: " + e.message, 3500);
+      input.focus(); input.select();
+    }
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+    e.stopPropagation();
+  });
+  input.addEventListener("blur", commit);
+  input.addEventListener("click", (e) => e.stopPropagation());
+}
+
+function applyRename(v, resp) {
+  const oldPath = v.path;
+  v.path = resp.path;
+  v.name = resp.name;
+  v.folder = resp.folder;
+  if (selected.has(oldPath)) { selected.delete(oldPath); selected.add(v.path); }
 }
 
 function updateSelUI() {
@@ -563,7 +651,9 @@ async function openPlayer(v) {
   const pct = $("#prog-pct");
   const msg = loading.querySelector(".msg");
 
-  $("#modal-title").textContent = `${v.folder}/${v.name}.${v.ext}`;
+  const titleEl = $("#modal-title");
+  currentPreview = { video: v, pollTimer: null };
+  refreshModalTitle();
   $("#modal-sub").textContent = `${fmtSize(v.size)} · ${new Date(v.date).toLocaleString()}`;
   $("#modal-select").textContent = selected.has(v.path) ? "Deselect" : "Select";
   $("#modal-select").onclick = () => {
@@ -571,6 +661,7 @@ async function openPlayer(v) {
     toggleSelect(v.path, card);
     $("#modal-select").textContent = selected.has(v.path) ? "Deselect" : "Select";
   };
+  titleEl.onclick = () => beginModalRename(v, refreshModalTitle);
 
   player.pause(); player.removeAttribute("src"); player.load();
   loading.style.display = "flex";
@@ -578,7 +669,6 @@ async function openPlayer(v) {
   msg.textContent = "Preparing preview…";
   modal.classList.add("open");
 
-  currentPreview = { video: v, pollTimer: null };
   const localToken = currentPreview;
 
   const check = async () => {
@@ -603,6 +693,60 @@ async function openPlayer(v) {
   };
   check();
   currentPreview.pollTimer = setInterval(check, 600);
+}
+
+function refreshModalTitle() {
+  const v = currentPreview?.video;
+  if (v) $("#modal-title").textContent = `${v.folder}/${v.name}.${v.ext}`;
+}
+
+function beginModalRename(v, refreshTitle) {
+  const titleEl = $("#modal-title");
+  if (titleEl.querySelector("input")) return;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "name-input";
+  input.value = v.name;
+  input.style.width = "260px";
+  input.spellcheck = false;
+  const originalContent = titleEl.textContent;
+  titleEl.textContent = "";
+  titleEl.appendChild(input);
+  input.focus(); input.select();
+
+  let done = false;
+  const cancel = () => { if (done) return; done = true; titleEl.textContent = originalContent; };
+  const commit = async () => {
+    if (done) return;
+    const newName = input.value.trim();
+    if (!newName || newName === v.name) { cancel(); return; }
+    done = true;
+    input.disabled = true;
+    try {
+      const r = await fetch("/api/rename", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({path: v.path, name: newName}),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || "rename failed");
+      applyRename(v, j);
+      refreshTitle();
+      render();
+      toast(`Renamed to ${v.name}`);
+    } catch (e) {
+      input.disabled = false;
+      done = false;
+      toast("Rename failed: " + e.message, 3500);
+      input.focus(); input.select();
+    }
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+    e.stopPropagation();
+  });
+  input.addEventListener("blur", commit);
 }
 
 function closePlayer() {
