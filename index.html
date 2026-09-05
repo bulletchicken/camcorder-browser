@@ -24,12 +24,13 @@
 
   /* --- Top bar --- */
   header {
-    position: sticky; top: 0; z-index: 30;
-    background: rgba(15,15,17,0.92); backdrop-filter: saturate(160%) blur(14px);
+    position: fixed; top: 0; left: 0; right: 0; z-index: 30;
+    background: rgba(15,15,17,0.94); backdrop-filter: saturate(160%) blur(14px);
     border-bottom: 1px solid var(--border);
     padding: 12px 20px;
     display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   }
+  body { padding-top: 62px; }
   h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.2px; }
   h1 .dot { color: var(--accent); }
   .count { color: var(--dim); font-variant-numeric: tabular-nums; }
@@ -67,7 +68,7 @@
   .day-header {
     display: flex; align-items: baseline; gap: 12px;
     padding: 6px 4px 10px; border-bottom: 1px solid var(--border); margin-bottom: 14px;
-    position: sticky; top: 61px; background: var(--bg); z-index: 10;
+    position: sticky; top: 62px; background: var(--bg); z-index: 10;
   }
   .day-header h2 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: -0.2px; }
   .day-header .meta { color: var(--dim); font-size: 12px; }
@@ -117,10 +118,28 @@
   }
   .check {
     position: absolute; top: 10px; left: 10px;
-    width: 24px; height: 24px; border-radius: 50%;
-    background: rgba(0,0,0,0.55); border: 2px solid rgba(255,255,255,0.55);
+    width: 26px; height: 26px; border-radius: 50%;
+    background: rgba(0,0,0,0.65); border: 2px solid rgba(255,255,255,0.65);
     display: flex; align-items: center; justify-content: center;
-    transition: background .12s, border-color .12s;
+    transition: background .12s, border-color .12s, transform .1s;
+    cursor: pointer; z-index: 3;
+  }
+  .check:hover { transform: scale(1.08); background: rgba(0,0,0,0.85); }
+  .play-btn {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    width: 58px; height: 58px; border-radius: 50%;
+    background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity .15s, transform .1s;
+    pointer-events: none; z-index: 2;
+  }
+  .thumb-wrap:hover .play-btn { opacity: 1; }
+  .play-btn::after {
+    content: ""; width: 0; height: 0;
+    border-left: 16px solid white;
+    border-top: 10px solid transparent;
+    border-bottom: 10px solid transparent;
+    margin-left: 4px;
   }
   .card.selected .check {
     background: var(--accent); border-color: var(--accent);
@@ -164,6 +183,47 @@
 
   .empty { text-align: center; color: var(--dim); padding: 80px 20px; }
   .empty h2 { font-size: 18px; color: var(--text); }
+
+  /* --- Video modal --- */
+  .modal-backdrop {
+    position: fixed; inset: 0; z-index: 60;
+    background: rgba(0,0,0,0.85);
+    display: none; align-items: center; justify-content: center;
+    padding: 40px;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    width: min(1200px, 95vw); max-height: 92vh;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .modal-header {
+    display: flex; align-items: center; gap: 12px; color: var(--text);
+  }
+  .modal-header .title { font-weight: 500; font-size: 14px; }
+  .modal-header .sub { color: var(--dim); font-size: 12px;
+    font-family: ui-monospace, SF Mono, Menlo, monospace; }
+  .modal-header .spacer { flex: 1; }
+  .modal-close {
+    background: transparent; border: none; color: var(--text); font-size: 22px;
+    cursor: pointer; padding: 4px 10px; border-radius: 6px;
+  }
+  .modal-close:hover { background: rgba(255,255,255,0.1); }
+  .video-frame {
+    position: relative;
+    background: #000; border-radius: 10px; overflow: hidden;
+    aspect-ratio: 16/9; max-height: 78vh;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .video-frame video { width: 100%; height: 100%; display: block; background: #000; }
+  .preview-loading {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: var(--text); gap: 16px; background: rgba(0,0,0,0.7);
+  }
+  .preview-loading .msg { font-size: 14px; color: var(--dim); }
+  .preview-loading .prog { width: 320px; height: 6px; background: #2a2c33; border-radius: 3px; overflow: hidden; }
+  .preview-loading .prog > div { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+  .preview-loading .pct { color: var(--text); font-variant-numeric: tabular-nums; font-size: 13px; }
 
   .toast {
     position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
@@ -212,6 +272,28 @@
       </div>
     </div>
     <div id="jobs"></div>
+  </div>
+
+  <div class="modal-backdrop" id="modal">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <div class="title" id="modal-title"></div>
+          <div class="sub" id="modal-sub"></div>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn" id="modal-select">Select</button>
+        <button class="modal-close" id="modal-close" title="Close (Esc)">✕</button>
+      </div>
+      <div class="video-frame">
+        <video id="player" controls preload="auto"></video>
+        <div class="preview-loading" id="loading">
+          <div class="msg">Preparing preview…</div>
+          <div class="prog"><div id="prog-bar"></div></div>
+          <div class="pct" id="prog-pct">0%</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -303,8 +385,9 @@ function cardEl(v) {
     <div class="thumb-wrap">
       <div class="placeholder">loading…</div>
       <img loading="lazy" alt="" data-src="/api/thumb?path=${encodeURIComponent(v.path)}">
+      <div class="play-btn"></div>
       <div class="badge" data-dur="${v.path}">${v.ext}</div>
-      <div class="check"></div>
+      <div class="check" title="Select"></div>
     </div>
     <div class="info">
       <div>
@@ -318,15 +401,30 @@ function cardEl(v) {
   img.addEventListener("error", () => {
     const p = card.querySelector(".placeholder"); if (p) p.textContent = "no preview";
   });
-  // trigger load
   img.src = img.dataset.src;
 
-  card.addEventListener("click", () => {
-    if (selected.has(v.path)) selected.delete(v.path); else selected.add(v.path);
-    card.classList.toggle("selected");
-    updateSelUI();
+  // checkbox = toggle select
+  card.querySelector(".check").addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleSelect(v.path, card);
+  });
+  // click info row = also toggle select (fallback area)
+  card.querySelector(".info").addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleSelect(v.path, card);
+  });
+  // click thumbnail area = play
+  card.querySelector(".thumb-wrap").addEventListener("click", (e) => {
+    if (e.target.closest(".check")) return;
+    openPlayer(v);
   });
   return card;
+}
+
+function toggleSelect(p, card) {
+  if (selected.has(p)) selected.delete(p); else selected.add(p);
+  card.classList.toggle("selected");
+  updateSelUI();
 }
 
 function updateSelUI() {
@@ -454,10 +552,79 @@ $("#clear-jobs").onclick = async () => {
 };
 $("#close-drawer").onclick = () => $("#drawer").classList.remove("open");
 
-// keyboard: Cmd/Ctrl-A select all, Esc clear
+// --- Video preview modal ---
+let currentPreview = null;    // {video, pollTimer}
+
+async function openPlayer(v) {
+  const modal = $("#modal");
+  const player = $("#player");
+  const loading = $("#loading");
+  const bar = $("#prog-bar");
+  const pct = $("#prog-pct");
+  const msg = loading.querySelector(".msg");
+
+  $("#modal-title").textContent = `${v.folder}/${v.name}.${v.ext}`;
+  $("#modal-sub").textContent = `${fmtSize(v.size)} · ${new Date(v.date).toLocaleString()}`;
+  $("#modal-select").textContent = selected.has(v.path) ? "Deselect" : "Select";
+  $("#modal-select").onclick = () => {
+    const card = document.querySelector(`.card[data-path="${CSS.escape(v.path)}"]`);
+    toggleSelect(v.path, card);
+    $("#modal-select").textContent = selected.has(v.path) ? "Deselect" : "Select";
+  };
+
+  player.pause(); player.removeAttribute("src"); player.load();
+  loading.style.display = "flex";
+  bar.style.width = "0%"; pct.textContent = "0%";
+  msg.textContent = "Preparing preview…";
+  modal.classList.add("open");
+
+  currentPreview = { video: v, pollTimer: null };
+  const localToken = currentPreview;
+
+  const check = async () => {
+    if (currentPreview !== localToken) return;
+    try {
+      const r = await fetch("/api/preview_info?path=" + encodeURIComponent(v.path));
+      const j = await r.json();
+      if (currentPreview !== localToken) return;
+      if (j.status === "ready" && j.url) {
+        clearInterval(localToken.pollTimer);
+        loading.style.display = "none";
+        player.src = j.url;
+        player.play().catch(() => {});
+      } else if (j.status === "error") {
+        clearInterval(localToken.pollTimer);
+        msg.textContent = "Preview failed: " + (j.error || "unknown");
+      } else {
+        bar.style.width = (j.progress || 0) + "%";
+        pct.textContent = Math.round(j.progress || 0) + "%";
+      }
+    } catch {}
+  };
+  check();
+  currentPreview.pollTimer = setInterval(check, 600);
+}
+
+function closePlayer() {
+  const modal = $("#modal");
+  const player = $("#player");
+  if (currentPreview?.pollTimer) clearInterval(currentPreview.pollTimer);
+  currentPreview = null;
+  player.pause(); player.removeAttribute("src"); player.load();
+  modal.classList.remove("open");
+}
+
+$("#modal-close").onclick = closePlayer;
+$("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closePlayer(); });
+
+// keyboard: Cmd/Ctrl-A select all, Esc clear/close
 window.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === "a") { e.preventDefault(); $("#select-all").click(); }
-  else if (e.key === "Escape") $("#clear-sel").click();
+  if (e.key === "Escape") {
+    if ($("#modal").classList.contains("open")) closePlayer();
+    else $("#clear-sel").click();
+  } else if ((e.metaKey || e.ctrlKey) && e.key === "a") {
+    if (!$("#modal").classList.contains("open")) { e.preventDefault(); $("#select-all").click(); }
+  }
 });
 
 load();

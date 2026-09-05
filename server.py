@@ -12,7 +12,7 @@ import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 SD_ROOTS = [
     Path("/Volumes/Untitled/SD_VIDEO"),
@@ -20,6 +20,7 @@ SD_ROOTS = [
 ]
 CACHE_DIR = Path.home() / "Library" / "Caches" / "camcorder-browser"
 THUMBS_DIR = CACHE_DIR / "thumbs"
+PREVIEWS_DIR = CACHE_DIR / "previews"
 DEFAULT_OUTPUT = Path.home() / "Movies" / "Camcorder"
 INDEX_HTML = Path(__file__).parent / "index.html"
 
@@ -27,10 +28,14 @@ VIDEO_EXTS = {".MOD", ".MPG", ".MTS", ".M2TS", ".AVI", ".MP4", ".MOV", ".MPEG"}
 
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_OUTPUT.mkdir(parents=True, exist_ok=True)
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
+
+PREVIEWS = {}  # hash -> {status, progress, error}
+PREVIEWS_LOCK = threading.Lock()
 
 
 def hash_path(p):
@@ -107,6 +112,76 @@ def get_duration(path):
         return dur
     except Exception:
         return 0.0
+
+
+def preview_path_for(src):
+    return PREVIEWS_DIR / (hash_path(src) + ".mp4")
+
+
+def transcode_preview(src_path):
+    """Encode a 720p H.264 MP4 preview of src_path. Blocks; updates PREVIEWS."""
+    src = Path(src_path)
+    h = hash_path(src)
+    out = preview_path_for(src)
+    tmp = out.with_suffix(".mp4.part")
+
+    with PREVIEWS_LOCK:
+        PREVIEWS[h] = {"status": "transcoding", "progress": 0, "error": ""}
+
+    duration = get_duration(src_path) or 0
+    cmd = [
+        "ffmpeg", "-y", "-fflags", "+genpts", "-i", str(src),
+        "-c:v", "h264_videotoolbox", "-b:v", "2M",
+        "-vf", "scale=-2:720",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        "-f", "mp4",
+        "-progress", "pipe:1", "-nostats",
+        str(tmp),
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for line in proc.stdout:
+        line = line.strip()
+        if line.startswith("out_time_ms=") and duration:
+            try:
+                secs = int(line.split("=", 1)[1]) / 1_000_000
+                pct = min(99, secs / duration * 100)
+                with PREVIEWS_LOCK:
+                    PREVIEWS[h]["progress"] = round(pct, 1)
+            except Exception:
+                pass
+    proc.wait()
+    if proc.returncode != 0:
+        err = (proc.stderr.read() if proc.stderr else "")[-500:]
+        try: tmp.unlink()
+        except: pass
+        with PREVIEWS_LOCK:
+            PREVIEWS[h] = {"status": "error", "progress": 0, "error": err or "ffmpeg failed"}
+        return
+    tmp.rename(out)
+    with PREVIEWS_LOCK:
+        PREVIEWS[h] = {"status": "ready", "progress": 100, "error": ""}
+
+
+def ensure_preview(src_path):
+    """Return (status_dict, cached_path_or_None). Kicks off transcode if missing."""
+    src = Path(src_path)
+    h = hash_path(src)
+    out = preview_path_for(src)
+    if out.exists() and out.stat().st_size > 0:
+        with PREVIEWS_LOCK:
+            PREVIEWS[h] = {"status": "ready", "progress": 100, "error": ""}
+        return {"status": "ready", "progress": 100}, out
+    with PREVIEWS_LOCK:
+        cur = PREVIEWS.get(h)
+        if cur and cur["status"] == "transcoding":
+            return cur, None
+        if cur and cur["status"] == "error":
+            # allow retry
+            pass
+        PREVIEWS[h] = {"status": "transcoding", "progress": 0, "error": ""}
+    threading.Thread(target=transcode_preview, args=(src_path,), daemon=True).start()
+    return {"status": "transcoding", "progress": 0}, None
 
 
 def convert_video(input_path, output_dir, job_id, index):
@@ -213,6 +288,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _range_file(self, path, content_type):
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            self.send_response(404); self.end_headers(); return
+        rng = self.headers.get("Range", "")
+        start, end = 0, size - 1
+        partial = False
+        if rng.startswith("bytes="):
+            try:
+                spec = rng[6:].split(",")[0]
+                s, _, e = spec.partition("-")
+                if s: start = int(s)
+                if e: end = int(e)
+                end = min(end, size - 1)
+                if start > end or start < 0:
+                    self.send_response(416); self.end_headers(); return
+                partial = True
+            except Exception:
+                partial = False; start, end = 0, size - 1
+        length = end - start + 1
+        try:
+            with open(path, "rb") as f:
+                f.seek(start)
+                self.send_response(206 if partial else 200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(length))
+                self.send_header("Accept-Ranges", "bytes")
+                if partial:
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                remaining = length
+                while remaining > 0:
+                    chunk = f.read(min(65536, remaining))
+                    if not chunk: break
+                    try:
+                        self.wfile.write(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        return
+                    remaining -= len(chunk)
+        except FileNotFoundError:
+            self.send_response(404); self.end_headers()
+
     def do_GET(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
@@ -235,6 +354,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/duration":
             p = unquote(q.get("path", [""])[0])
             self._json(200, {"duration": get_duration(p)})
+        elif path == "/api/preview_info":
+            p = unquote(q.get("path", [""])[0])
+            status, cached = ensure_preview(p)
+            self._json(200, {
+                "status": status["status"],
+                "progress": status.get("progress", 0),
+                "error": status.get("error", ""),
+                "url": f"/api/preview?path={quote(p)}" if cached else None,
+            })
+        elif path == "/api/preview":
+            p = unquote(q.get("path", [""])[0])
+            src = Path(p)
+            out = preview_path_for(src)
+            if not (out.exists() and out.stat().st_size > 0):
+                self.send_response(404); self.end_headers(); return
+            self._range_file(str(out), "video/mp4")
         elif path == "/api/jobs":
             with JOBS_LOCK:
                 self._json(200, {"jobs": list(JOBS.values())})
