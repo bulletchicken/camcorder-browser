@@ -226,6 +226,10 @@
     cursor: pointer; padding: 4px 10px; border-radius: 6px;
   }
   .modal-close:hover { background: rgba(255,255,255,0.1); }
+  .player-row {
+    display: flex; align-items: center; gap: 14px;
+  }
+  .player-row .video-frame { flex: 1 1 auto; min-width: 0; }
   .video-frame {
     position: relative;
     background: #000; border-radius: 10px; overflow: hidden;
@@ -233,6 +237,24 @@
     display: flex; align-items: center; justify-content: center;
   }
   .video-frame video { width: 100%; height: 100%; display: block; background: #000; }
+  .nav-arrow {
+    flex: 0 0 auto;
+    width: 48px; height: 48px; border-radius: 50%;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border);
+    cursor: pointer; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .12s, transform .08s, border-color .12s, color .12s;
+  }
+  .nav-arrow:hover:not(:disabled) {
+    background: #262933; border-color: #3a3c44; color: white;
+    transform: scale(1.06);
+  }
+  .nav-arrow:active:not(:disabled) { transform: scale(0.96); }
+  .nav-arrow:disabled { opacity: 0.3; cursor: not-allowed; }
+  .nav-arrow svg { width: 22px; height: 22px; display: block; }
+  .nav-count { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums;
+    padding-right: 4px; }
   .preview-loading {
     position: absolute; inset: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -300,16 +322,25 @@
           <div class="sub" id="modal-sub"></div>
         </div>
         <div class="spacer"></div>
+        <div class="nav-count" id="nav-count"></div>
         <button class="btn" id="modal-select">Select</button>
         <button class="modal-close" id="modal-close" title="Close (Esc)">✕</button>
       </div>
-      <div class="video-frame">
-        <video id="player" controls preload="auto"></video>
-        <div class="preview-loading" id="loading">
-          <div class="msg">Preparing preview…</div>
-          <div class="prog"><div id="prog-bar"></div></div>
-          <div class="pct" id="prog-pct">0%</div>
+      <div class="player-row">
+        <button class="nav-arrow" id="nav-prev" title="Previous (←)" aria-label="Previous">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="video-frame">
+          <video id="player" controls preload="auto"></video>
+          <div class="preview-loading" id="loading">
+            <div class="msg">Preparing preview…</div>
+            <div class="prog"><div id="prog-bar"></div></div>
+            <div class="pct" id="prog-pct">0%</div>
+          </div>
         </div>
+        <button class="nav-arrow" id="nav-next" title="Next (→)" aria-label="Next">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
       </div>
     </div>
   </div>
@@ -446,12 +477,6 @@ function cardEl(v) {
   return card;
 }
 
-function toggleSelect(p, card) {
-  if (selected.has(p)) selected.delete(p); else selected.add(p);
-  card.classList.toggle("selected");
-  updateSelUI();
-}
-
 function beginRename(card, v) {
   const nameEl = card.querySelector(".name");
   if (!nameEl || card.querySelector(".name-input")) return;
@@ -513,6 +538,12 @@ function applyRename(v, resp) {
   v.name = resp.name;
   v.folder = resp.folder;
   if (selected.has(oldPath)) { selected.delete(oldPath); selected.add(v.path); }
+}
+
+function toggleSelect(p, card) {
+  if (selected.has(p)) selected.delete(p); else selected.add(p);
+  card.classList.toggle("selected");
+  updateSelUI();
 }
 
 function updateSelUI() {
@@ -650,11 +681,15 @@ async function openPlayer(v) {
   const bar = $("#prog-bar");
   const pct = $("#prog-pct");
   const msg = loading.querySelector(".msg");
-
   const titleEl = $("#modal-title");
+
+  const idx = videos.indexOf(v);
   currentPreview = { video: v, pollTimer: null };
   refreshModalTitle();
   $("#modal-sub").textContent = `${fmtSize(v.size)} · ${new Date(v.date).toLocaleString()}`;
+  $("#nav-count").textContent = idx >= 0 ? `${idx + 1} / ${videos.length}` : "";
+  $("#nav-prev").disabled = idx <= 0;
+  $("#nav-next").disabled = idx < 0 || idx >= videos.length - 1;
   $("#modal-select").textContent = selected.has(v.path) ? "Deselect" : "Select";
   $("#modal-select").onclick = () => {
     const card = document.querySelector(`.card[data-path="${CSS.escape(v.path)}"]`);
@@ -672,7 +707,7 @@ async function openPlayer(v) {
   const localToken = currentPreview;
 
   const check = async () => {
-    if (currentPreview !== localToken) return;
+    if (currentPreview !== localToken) return;   // modal was closed/re-opened
     try {
       const r = await fetch("/api/preview_info?path=" + encodeURIComponent(v.path));
       const j = await r.json();
@@ -699,6 +734,17 @@ function refreshModalTitle() {
   const v = currentPreview?.video;
   if (v) $("#modal-title").textContent = `${v.folder}/${v.name}.${v.ext}`;
 }
+
+function stepPlayer(dir) {
+  if (!currentPreview) return;
+  const idx = videos.indexOf(currentPreview.video);
+  if (idx < 0) return;
+  const next = idx + dir;
+  if (next < 0 || next >= videos.length) return;
+  openPlayer(videos[next]);
+}
+$("#nav-prev").onclick = () => stepPlayer(-1);
+$("#nav-next").onclick = () => stepPlayer(1);
 
 function beginModalRename(v, refreshTitle) {
   const titleEl = $("#modal-title");
@@ -732,6 +778,16 @@ function beginModalRename(v, refreshTitle) {
       if (!r.ok || !j.ok) throw new Error(j.error || "rename failed");
       applyRename(v, j);
       refreshTitle();
+      // update the card in the background grid too
+      const card = document.querySelector(`.card[data-path="${CSS.escape(j.path)}"]`)
+                 || [...document.querySelectorAll(".card")].find(c => c.dataset.path === j.path);
+      // best-effort: full re-render would be simpler
+      const cards = document.querySelectorAll(".card");
+      cards.forEach(c => {
+        const nm = c.querySelector(".name");
+        if (nm && videos.find(x => x.path === c.dataset.path)) return;
+      });
+      // simplest: update video path in the list and re-render
       render();
       toast(`Renamed to ${v.name}`);
     } catch (e) {
@@ -761,13 +817,22 @@ function closePlayer() {
 $("#modal-close").onclick = closePlayer;
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closePlayer(); });
 
-// keyboard: Cmd/Ctrl-A select all, Esc clear/close
+// keyboard: Cmd/Ctrl-A select all, Esc clear
 window.addEventListener("keydown", (e) => {
+  const modalOpen = $("#modal").classList.contains("open");
+  const inInput = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA";
   if (e.key === "Escape") {
-    if ($("#modal").classList.contains("open")) closePlayer();
+    if (modalOpen) closePlayer();
     else $("#clear-sel").click();
   } else if ((e.metaKey || e.ctrlKey) && e.key === "a") {
-    if (!$("#modal").classList.contains("open")) { e.preventDefault(); $("#select-all").click(); }
+    if (!modalOpen) { e.preventDefault(); $("#select-all").click(); }
+  } else if (modalOpen && !inInput) {
+    if (e.key === "ArrowLeft") { e.preventDefault(); stepPlayer(-1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); stepPlayer(1); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      if (currentPreview?.video) beginModalRename(currentPreview.video, refreshModalTitle);
+    }
   }
 });
 
