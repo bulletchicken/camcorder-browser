@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Camcorder</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root {
+    --bg: #0f0f11;
+    --panel: #17181c;
+    --panel-2: #1e2026;
+    --border: #2a2c33;
+    --text: #ececee;
+    --dim: #8a8d97;
+    --accent: #4c9eff;
+    --accent-dim: #2c5a99;
+    --success: #4caf50;
+    --danger: #ff5252;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+  a { color: var(--accent); }
+
+  /* --- Top bar --- */
+  header {
+    position: sticky; top: 0; z-index: 30;
+    background: rgba(15,15,17,0.92); backdrop-filter: saturate(160%) blur(14px);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.2px; }
+  h1 .dot { color: var(--accent); }
+  .count { color: var(--dim); font-variant-numeric: tabular-nums; }
+  .count b { color: var(--text); }
+  .spacer { flex: 1; }
+
+  .btn {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 13px; font: inherit; cursor: pointer;
+    transition: background .12s, border-color .12s, transform .05s;
+  }
+  .btn:hover { background: #262933; }
+  .btn:active { transform: translateY(1px); }
+  .btn.ghost { background: transparent; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: white; font-weight: 600; }
+  .btn.primary:hover { background: #5fa9ff; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-group { display: flex; gap: 6px; align-items: center; }
+
+  .out-dir {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 4px 6px 4px 10px;
+    font-size: 13px; color: var(--dim); max-width: 380px;
+  }
+  .out-dir .label { color: var(--dim); }
+  .out-dir .path { color: var(--text); font-family: ui-monospace, SF Mono, Menlo, monospace;
+    font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+  .out-dir .btn { padding: 3px 8px; font-size: 12px; }
+
+  /* --- Main content --- */
+  main { padding: 8px 20px 220px; }
+  .day-group { margin-top: 26px; }
+  .day-header {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 6px 4px 10px; border-bottom: 1px solid var(--border); margin-bottom: 14px;
+    position: sticky; top: 61px; background: var(--bg); z-index: 10;
+  }
+  .day-header h2 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: -0.2px; }
+  .day-header .meta { color: var(--dim); font-size: 12px; }
+  .day-header .day-select { margin-left: auto; font-size: 12px; color: var(--dim);
+    cursor: pointer; padding: 2px 8px; border-radius: 6px; }
+  .day-header .day-select:hover { color: var(--text); background: var(--panel-2); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    background: var(--panel);
+    border: 2px solid transparent;
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    position: relative;
+    transition: border-color .12s, transform .06s, box-shadow .12s;
+    user-select: none;
+  }
+  .card:hover { border-color: #33363d; }
+  .card.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(76,158,255,0.15);
+  }
+  .thumb-wrap {
+    position: relative;
+    aspect-ratio: 16/9;
+    background: #000;
+    overflow: hidden;
+  }
+  .thumb-wrap img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+    background: #000;
+  }
+  .thumb-wrap .placeholder {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--dim); font-size: 12px; background: linear-gradient(180deg,#1a1c22,#0e0f13);
+  }
+  .badge {
+    position: absolute; bottom: 8px; right: 8px;
+    background: rgba(0,0,0,0.72); color: #fff; font-size: 11px;
+    padding: 3px 6px; border-radius: 4px; font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SF Mono, Menlo, monospace;
+  }
+  .check {
+    position: absolute; top: 10px; left: 10px;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: rgba(0,0,0,0.55); border: 2px solid rgba(255,255,255,0.55);
+    display: flex; align-items: center; justify-content: center;
+    transition: background .12s, border-color .12s;
+  }
+  .card.selected .check {
+    background: var(--accent); border-color: var(--accent);
+  }
+  .card.selected .check::after {
+    content: ""; width: 6px; height: 12px;
+    border: solid white; border-width: 0 2px 2px 0;
+    transform: rotate(45deg) translate(-1px,-1px);
+  }
+  .info {
+    padding: 9px 12px 11px;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  }
+  .info .name { font-weight: 500; font-size: 13px; }
+  .info .sub { color: var(--dim); font-size: 11px;
+    font-family: ui-monospace, SF Mono, Menlo, monospace; }
+
+  /* --- Bottom drawer --- */
+  .drawer {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    background: rgba(23,24,28,0.98); backdrop-filter: blur(20px);
+    border-top: 1px solid var(--border);
+    padding: 14px 20px;
+    transform: translateY(100%);
+    transition: transform .18s ease-out;
+    max-height: 45vh; overflow-y: auto;
+  }
+  .drawer.open { transform: translateY(0); }
+  .drawer h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+  .job { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: var(--panel); }
+  .job-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+  .job .status { font-size: 12px; color: var(--dim); }
+  .job .status.running { color: var(--accent); }
+  .job .status.done { color: var(--success); }
+  .job .status.error { color: var(--danger); }
+  .bar { height: 6px; background: #2a2c33; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); transition: width .3s; }
+  .job-meta { display: flex; gap: 12px; font-size: 12px; color: var(--dim); margin-top: 6px;
+    font-family: ui-monospace, SF Mono, Menlo, monospace; }
+  .fails { color: var(--danger); }
+
+  .empty { text-align: center; color: var(--dim); padding: 80px 20px; }
+  .empty h2 { font-size: 18px; color: var(--text); }
+
+  .toast {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: var(--panel-2); border: 1px solid var(--border);
+    padding: 10px 16px; border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+    z-index: 50; opacity: 0; transition: opacity .2s;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <header>
+    <h1><span class="dot">●</span> Camcorder</h1>
+    <div class="count"><b id="sel-count">0</b> / <span id="total-count">…</span> selected</div>
+
+    <div class="spacer"></div>
+
+    <div class="out-dir">
+      <span class="label">Save to</span>
+      <span class="path" id="out-path" title="">…</span>
+      <button class="btn" id="pick-out">Change…</button>
+    </div>
+
+    <div class="btn-group">
+      <button class="btn ghost" id="select-all">Select all</button>
+      <button class="btn ghost" id="clear-sel">Clear</button>
+      <button class="btn primary" id="convert" disabled>Convert to MP4</button>
+    </div>
+  </header>
+
+  <main id="content">
+    <div class="empty" id="empty" style="display:none">
+      <h2>No videos found</h2>
+      <p>Insert the SD card, then reload.</p>
+    </div>
+  </main>
+
+  <div class="drawer" id="drawer">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <h3>Conversions</h3>
+      <div class="btn-group">
+        <button class="btn ghost" id="open-out">Open output folder</button>
+        <button class="btn ghost" id="clear-jobs">Clear finished</button>
+        <button class="btn ghost" id="close-drawer">Hide</button>
+      </div>
+    </div>
+    <div id="jobs"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+const $ = (s, el=document) => el.querySelector(s);
+const $$ = (s, el=document) => [...el.querySelectorAll(s)];
+
+let videos = [];
+let selected = new Set();
+let outputDir = "";
+let jobsPollTimer = null;
+
+const fmtSize = (b) => {
+  if (b > 1e9) return (b/1e9).toFixed(2) + " GB";
+  if (b > 1e6) return (b/1e6).toFixed(1) + " MB";
+  if (b > 1e3) return (b/1e3).toFixed(0) + " KB";
+  return b + " B";
+};
+const fmtDuration = (s) => {
+  if (!s || !isFinite(s)) return "";
+  s = Math.round(s);
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
+  return h > 0 ? `${h}:${String(m).padStart(2,"0")}:${String(ss).padStart(2,"0")}`
+               : `${m}:${String(ss).padStart(2,"0")}`;
+};
+const dayKey = (iso) => iso.slice(0,10);
+const dayLabel = (iso) => {
+  const d = new Date(iso);
+  const opts = { weekday: "long", month: "long", day: "numeric", year: "numeric" };
+  return d.toLocaleDateString(undefined, opts);
+};
+
+function toast(msg, ms=2200) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), ms);
+}
+
+async function load() {
+  const r = await fetch("/api/videos");
+  const j = await r.json();
+  videos = j.videos;
+  outputDir = j.default_output;
+  $("#out-path").textContent = outputDir.replace(/^\/Users\/[^/]+/, "~");
+  $("#out-path").title = outputDir;
+  $("#total-count").textContent = videos.length;
+  render();
+  hydrateDurations();
+}
+
+function render() {
+  const main = $("#content");
+  main.innerHTML = "";
+  if (!videos.length) { $("#empty").style.display = ""; main.appendChild($("#empty")); return; }
+
+  // group by day
+  const groups = new Map();
+  for (const v of videos) {
+    const k = dayKey(v.date);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(v);
+  }
+
+  for (const [key, list] of groups) {
+    const g = document.createElement("section"); g.className = "day-group";
+    const head = document.createElement("div"); head.className = "day-header";
+    const totalBytes = list.reduce((s,v)=>s+v.size,0);
+    head.innerHTML = `
+      <h2>${dayLabel(list[0].date)}</h2>
+      <span class="meta">${list.length} clip${list.length===1?"":"s"} · ${fmtSize(totalBytes)}</span>
+      <span class="day-select" data-day="${key}">Select all in day</span>
+    `;
+    g.appendChild(head);
+
+    const grid = document.createElement("div"); grid.className = "grid";
+    for (const v of list) grid.appendChild(cardEl(v));
+    g.appendChild(grid);
+    main.appendChild(g);
+  }
+  updateSelUI();
+}
+
+function cardEl(v) {
+  const card = document.createElement("div");
+  card.className = "card" + (selected.has(v.path) ? " selected" : "");
+  card.dataset.path = v.path;
+  const time = new Date(v.date).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+  card.innerHTML = `
+    <div class="thumb-wrap">
+      <div class="placeholder">loading…</div>
+      <img loading="lazy" alt="" data-src="/api/thumb?path=${encodeURIComponent(v.path)}">
+      <div class="badge" data-dur="${v.path}">${v.ext}</div>
+      <div class="check"></div>
+    </div>
+    <div class="info">
+      <div>
+        <div class="name">${v.folder}/${v.name}</div>
+        <div class="sub">${time} · ${fmtSize(v.size)}</div>
+      </div>
+    </div>
+  `;
+  const img = card.querySelector("img");
+  img.addEventListener("load", () => card.querySelector(".placeholder")?.remove());
+  img.addEventListener("error", () => {
+    const p = card.querySelector(".placeholder"); if (p) p.textContent = "no preview";
+  });
+  // trigger load
+  img.src = img.dataset.src;
+
+  card.addEventListener("click", () => {
+    if (selected.has(v.path)) selected.delete(v.path); else selected.add(v.path);
+    card.classList.toggle("selected");
+    updateSelUI();
+  });
+  return card;
+}
+
+function updateSelUI() {
+  $("#sel-count").textContent = selected.size;
+  $("#convert").disabled = selected.size === 0;
+}
+
+async function hydrateDurations() {
+  const badges = $$(".badge[data-dur]");
+  const CONC = 6;
+  let i = 0;
+  async function worker() {
+    while (i < badges.length) {
+      const b = badges[i++];
+      const p = b.dataset.dur;
+      try {
+        const r = await fetch("/api/duration?path=" + encodeURIComponent(p));
+        const j = await r.json();
+        if (j.duration) b.textContent = fmtDuration(j.duration);
+      } catch {}
+    }
+  }
+  await Promise.all(Array.from({length: CONC}, worker));
+}
+
+// --- Selection ops ---
+$("#select-all").onclick = () => {
+  videos.forEach(v => selected.add(v.path));
+  $$(".card").forEach(c => c.classList.add("selected"));
+  updateSelUI();
+};
+$("#clear-sel").onclick = () => {
+  selected.clear();
+  $$(".card").forEach(c => c.classList.remove("selected"));
+  updateSelUI();
+};
+document.addEventListener("click", (e) => {
+  const sel = e.target.closest(".day-select");
+  if (!sel) return;
+  const key = sel.dataset.day;
+  const paths = videos.filter(v => dayKey(v.date) === key).map(v => v.path);
+  const allIn = paths.every(p => selected.has(p));
+  paths.forEach(p => allIn ? selected.delete(p) : selected.add(p));
+  $$(".card").forEach(c => {
+    if (paths.includes(c.dataset.path))
+      c.classList.toggle("selected", !allIn);
+  });
+  updateSelUI();
+});
+
+// --- Output folder ---
+$("#pick-out").onclick = async () => {
+  const r = await fetch("/api/pick_folder");
+  const j = await r.json();
+  if (j.folder) {
+    outputDir = j.folder;
+    $("#out-path").textContent = outputDir.replace(/^\/Users\/[^/]+/, "~");
+    $("#out-path").title = outputDir;
+  }
+};
+$("#open-out").onclick = () => { fetch("/api/open?path=" + encodeURIComponent(outputDir)); };
+
+// --- Convert ---
+$("#convert").onclick = async () => {
+  const paths = [...selected];
+  if (!paths.length) return;
+  const r = await fetch("/api/convert", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({paths, output_dir: outputDir}),
+  });
+  const j = await r.json();
+  toast(`Started converting ${paths.length} clip${paths.length===1?"":"s"}`);
+  $("#drawer").classList.add("open");
+  startPolling();
+};
+
+// --- Jobs polling ---
+function startPolling() {
+  if (jobsPollTimer) return;
+  const tick = async () => {
+    try {
+      const r = await fetch("/api/jobs");
+      const j = await r.json();
+      renderJobs(j.jobs);
+      const active = j.jobs.some(x => x.status === "running" || x.status === "queued");
+      if (!active) { clearInterval(jobsPollTimer); jobsPollTimer = null; }
+    } catch {}
+  };
+  tick();
+  jobsPollTimer = setInterval(tick, 700);
+}
+
+function renderJobs(jobs) {
+  const el = $("#jobs");
+  if (!jobs.length) { el.innerHTML = '<div style="color:var(--dim); font-size:12px;">No jobs yet.</div>'; return; }
+  el.innerHTML = "";
+  jobs.slice().reverse().forEach(j => {
+    const done = j.completed.length, failed = j.failed.length;
+    const overallPct = j.total ? ((done + (j.file_progress||0)/100) / j.total * 100) : 0;
+    const div = document.createElement("div"); div.className = "job";
+    div.innerHTML = `
+      <div class="job-head">
+        <div>
+          <div style="font-weight:500;">${done}/${j.total} converted${failed?` · <span class="fails">${failed} failed</span>`:""}</div>
+          <div class="job-meta">
+            ${j.status === "running" ? `▶ ${j.current} (${Math.round(j.file_progress||0)}%)` : ""}
+            ${j.status === "done" ? `✓ complete → ${j.output_dir.replace(/^\/Users\/[^/]+/,"~")}` : ""}
+            ${j.status === "queued" ? "waiting…" : ""}
+            ${j.status === "error" ? "error: " + (j.error||"") : ""}
+            ${j.status === "cancelled" ? "cancelled" : ""}
+          </div>
+        </div>
+        <div class="status ${j.status}">${j.status}</div>
+      </div>
+      <div class="bar"><div style="width:${overallPct}%"></div></div>
+    `;
+    el.appendChild(div);
+  });
+}
+
+$("#clear-jobs").onclick = async () => {
+  await fetch("/api/clear_jobs", {method:"POST"});
+  startPolling();
+};
+$("#close-drawer").onclick = () => $("#drawer").classList.remove("open");
+
+// keyboard: Cmd/Ctrl-A select all, Esc clear
+window.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "a") { e.preventDefault(); $("#select-all").click(); }
+  else if (e.key === "Escape") $("#clear-sel").click();
+});
+
+load();
+</script>
+</body>
+</html>
